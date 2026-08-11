@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-08-11
 
 - Initial EMQX Cloud Terraform Provider release.
 - HTTPS-only API endpoints and same-origin redirect protection for Basic Auth credentials.

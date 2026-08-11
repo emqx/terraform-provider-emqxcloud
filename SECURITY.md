@@ -10,5 +10,8 @@ are explicitly authorized to use.
 
 ## Supported versions
 
-No version of this Provider has been publicly released yet. Supported versions will be listed here when the first
-release is published. This statement does not establish a response-time or remediation-time commitment.
+| Version | Supported |
+| --- | --- |
+| 0.1.x | Yes |
+
+This statement does not establish a response-time or remediation-time commitment.

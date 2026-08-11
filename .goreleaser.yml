@@ -22,6 +22,11 @@ archives:
   - formats:
       - zip
     name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    files:
+      - CHANGELOG.md
+      - LICENSE
+      - NOTICE
+      - README.md
 
 checksum:
   extra_files:

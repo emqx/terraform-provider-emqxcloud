@@ -32,10 +32,10 @@ test "$(find "$release_dir" -maxdepth 1 -type f -name '*.zip' | wc -l | tr -d ' 
 
 for archive in "$release_dir"/*.zip; do
   entries=$(unzip -Z1 "$archive")
-  test "$(printf '%s\n' "$entries" | wc -l | tr -d ' ')" = 4
+  test "$(printf '%s\n' "$entries" | wc -l | tr -d ' ')" = 5
   for entry in $entries; do
     case "$entry" in
-      CHANGELOG.md|LICENSE|README.md|terraform-provider-emqxcloud_v*) ;;
+      CHANGELOG.md|LICENSE|NOTICE|README.md|terraform-provider-emqxcloud_v*) ;;
       *) echo "unexpected archive content in $archive: $entry" >&2; exit 1 ;;
     esac
   done
