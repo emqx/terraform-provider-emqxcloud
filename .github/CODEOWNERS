@@ -1,0 +1,11 @@
+## Default
+* @emqx/emqxcloud
+
+## Release and security configuration
+/.github/workflows/  @emqx/emqxcloud
+/.goreleaser.yml     @emqx/emqxcloud
+/scripts/            @emqx/emqxcloud
+
+## Generated Registry documentation. Regenerate with ./scripts/generate-docs.sh
+## instead of editing these files by hand.
+/docs/               @emqx/emqxcloud

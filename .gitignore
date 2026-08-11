@@ -1,0 +1,36 @@
+# Go build and test artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+vendor/
+go.work
+go.work.sum
+
+# Terraform local artifacts
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.log
+
+# Local release output and credentials
+dist/
+.env
+.DS_Store
+.claude/
+
+# Editor and IDE state
+.idea/
+*.swp
+
+/dev/
+/spec/

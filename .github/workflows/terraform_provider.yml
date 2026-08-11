@@ -1,0 +1,91 @@
+name: Terraform Provider
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.25.x
+          cache-dependency-path: go.sum
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+      - name: Check repository identity and Registry file set
+        run: ./scripts/check-repository.sh
+      - name: Resolve the version under development
+        id: version
+        run: |
+          version=$(sed -n 's/^## \[\([0-9][0-9.]*\)\].*/\1/p' CHANGELOG.md | head -n 1)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Check release version consistency
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: ./scripts/check-version.sh "$VERSION"
+      - name: Check Go formatting
+        run: test -z "$(gofmt -l .)"
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive examples/
+      - name: Test
+        run: go test ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Build
+        run: go build ./...
+      - name: Generate Registry documentation
+        run: ./scripts/generate-docs.sh
+      - name: Check generated Registry documentation
+        run: git diff --exit-code -- docs
+      - name: Validate Registry documentation
+        run: ./scripts/validate-docs.sh
+      - name: Check GoReleaser configuration
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: v2.17.1
+          args: check
+      - name: Check whitespace and conflict markers
+        run: |
+          git add -N .
+          git diff --check
+
+  examples:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        terraform_version:
+          - 1.0.11
+          - 1.15.8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.25.x
+          cache-dependency-path: go.sum
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ matrix.terraform_version }}
+          terraform_wrapper: false
+      - name: Resolve the version under development
+        id: version
+        run: |
+          version=$(sed -n 's/^## \[\([0-9][0-9.]*\)\].*/\1/p' CHANGELOG.md | head -n 1)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Initialize and validate examples
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: ./scripts/validate-examples.sh terraform "$VERSION"

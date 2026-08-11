@@ -1,0 +1,53 @@
+---
+{{ if or (eq .Name "emqxcloud_deployment") (eq .Name "emqxcloud_deployment_tls") -}}
+subcategory: "Platform"
+{{ else -}}
+subcategory: "Deployment"
+{{ end -}}
+---
+
+# {{ .Name }} Resource
+
+{{ .Description }}
+
+{{ if eq .Name "emqxcloud_deployment" }}
+
+~> **Warning:** This resource never deletes a remote deployment. A deployment can continue to incur charges after
+it is removed from configuration. Transfer its Terraform state deliberately and assign a manual cleanup owner.
+{{ else if eq .Name "emqxcloud_deployment_tls" }}
+
+~> **Warning:** Certificates and private keys remain in Terraform state. Two-way TLS requires
+`ca_certificate_pem`.
+{{ else if or (eq .Name "emqxcloud_connector") (eq .Name "emqxcloud_action") (eq .Name "emqxcloud_rule") }}
+
+~> **Warning:** `config_json` is Sensitive but remains in Terraform state. Delete dependencies in Rule, Action,
+Connector order.
+{{ else if eq .Name "emqxcloud_authentication_user" }}
+
+~> **Warning:** The password is write-only remotely but remains in Terraform state.
+{{ else if or (eq .Name "emqxcloud_authorization_user") (eq .Name "emqxcloud_authorization_client") }}
+
+~> **Warning:** This resource owns the selected identity's complete built-in authorization rule set.
+{{ else if eq .Name "emqxcloud_banned" }}
+
+~> **Note:** This resource owns one exact `as` and `who` entry. Changes replace that entry and never delete the
+collection.
+{{ end }}
+
+## Example Usage
+
+{{ if eq .Name "emqxcloud_deployment" }}
+{{ tffile "examples/platform/deployment/main.tf" }}
+{{ else if eq .Name "emqxcloud_deployment_tls" }}
+{{ tffile "examples/platform/tls/main.tf" }}
+{{ else if or (eq .Name "emqxcloud_connector") (eq .Name "emqxcloud_action") (eq .Name "emqxcloud_rule") }}
+{{ tffile "examples/deployment/data-integration/main.tf" }}
+{{ else }}
+{{ tffile "examples/deployment/security/main.tf" }}
+{{ end }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Terraform import is not supported in v0.1.0.

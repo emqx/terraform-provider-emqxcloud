@@ -1,0 +1,45 @@
+---
+page_title: "EMQX Cloud Provider"
+description: |-
+  Manage EMQX Cloud Platform resources and resources inside EMQX v5 deployments.
+---
+
+# EMQX Cloud Provider
+
+The EMQX Cloud Provider uses two independent credential groups:
+
+- The **Platform API** reads projects and deployments and manages Dedicated Flex deployment lifecycle and TLS.
+- The **Deployment API** manages resources inside one EMQX v5 deployment.
+
+Configure only the group required by the data sources and resources in the current Provider instance. Endpoint,
+API key, and API secret must be configured together, and credentials never fall back between the two groups.
+
+## Example Usage
+
+{{ tffile "examples/platform/data-sources/main.tf" }}
+
+Use aliases when one configuration manages Platform resources and one or more deployments:
+
+```terraform
+provider "emqxcloud" {
+  alias = "platform"
+}
+
+provider "emqxcloud" {
+  alias = "deployment"
+}
+```
+
+The Provider reads credentials from its arguments or the corresponding `EMQXCLOUD_PLATFORM_*` and
+`EMQXCLOUD_DEPLOYMENT_*` environment variables. API key identifiers are intentionally not marked Sensitive; API
+secrets are. Treat both as credentials. Sensitive values and opaque JSON can remain in Terraform state because
+`Sensitive` suppresses normal CLI display but does not encrypt state.
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Lifecycle Notes
+
+- `emqxcloud_deployment` creates Dedicated Flex deployments but never deletes them.
+- Terraform import is not supported in v0.1.0.
+- Delete dependent resources in Rule, Action, Connector order.
+- Platform deployment credentials do not provide Deployment API credentials. Configure each deployment separately.
