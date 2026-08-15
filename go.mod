@@ -1,6 +1,6 @@
 module github.com/emqx/terraform-provider-emqxcloud
 
-go 1.25.8
+go 1.25.13
 
 require (
 	github.com/hashicorp/terraform-plugin-framework v1.19.0
