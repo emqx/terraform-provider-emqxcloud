@@ -26,7 +26,8 @@ if git grep -nF "$old_repository"; then
   exit 1
 fi
 
-expected_docs='docs/data-sources/deployment.md
+expected_docs='docs/actions/reset_authorization_cache.md
+docs/data-sources/deployment.md
 docs/data-sources/deployments.md
 docs/data-sources/projects.md
 docs/index.md
@@ -38,7 +39,8 @@ docs/resources/banned.md
 docs/resources/connector.md
 docs/resources/deployment.md
 docs/resources/deployment_tls.md
-docs/resources/rule.md'
+docs/resources/rule.md
+docs/resources/source.md'
 actual_docs=$(find docs -type f -print | LC_ALL=C sort)
 test "$actual_docs" = "$expected_docs" || {
   echo "Registry documentation file set does not match registered objects" >&2

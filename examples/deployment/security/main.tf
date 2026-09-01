@@ -4,7 +4,7 @@ terraform {
   required_providers {
     emqxcloud = {
       source  = "emqx/emqxcloud"
-      version = "~> 0.1.0"
+      version = "~> 0.2.0"
     }
   }
 }
@@ -70,6 +70,6 @@ resource "emqxcloud_banned" "current" {
   as  = "clientid"
   who = var.banned_client_id
   config_json = jsonencode({
-    reason = "Terraform Provider v0.1 preview"
+    reason = "Terraform Provider v0.2 preview"
   })
 }
