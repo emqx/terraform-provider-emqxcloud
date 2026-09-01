@@ -4,7 +4,7 @@ terraform {
   required_providers {
     emqxcloud = {
       source  = "emqx/emqxcloud"
-      version = "~> 0.1.0"
+      version = "~> 0.2.0"
     }
   }
 }
@@ -21,7 +21,6 @@ resource "emqxcloud_connector" "http" {
   provider = emqxcloud.deployment
 
   type = "http"
-  name = "terraform_preview"
   config_json = jsonencode({
     enable          = true
     connect_timeout = "5s"
@@ -37,7 +36,6 @@ resource "emqxcloud_action" "http" {
   provider = emqxcloud.deployment
 
   type = "http"
-  name = "terraform_preview"
   config_json = jsonencode({
     connector = emqxcloud_connector.http.name
     enable    = true
@@ -52,12 +50,18 @@ resource "emqxcloud_action" "http" {
 resource "emqxcloud_rule" "http" {
   provider = emqxcloud.deployment
 
-  rule_id = "terraform_preview"
   config_json = jsonencode({
-    name        = "terraform_preview"
     sql         = "SELECT * FROM \"terraform/preview\""
     actions     = ["${emqxcloud_action.http.type}:${emqxcloud_action.http.name}"]
     enable      = true
-    description = "Terraform Provider v0.1 preview"
+    description = "Terraform Provider v0.2 preview"
   })
+}
+
+output "data_integration_identities" {
+  value = {
+    connector_name = emqxcloud_connector.http.name
+    action_name    = emqxcloud_action.http.name
+    rule_id        = emqxcloud_rule.http.rule_id
+  }
 }

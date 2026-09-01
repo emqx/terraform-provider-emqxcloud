@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,8 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
+	frameworkresource "github.com/hashicorp/terraform-plugin-framework/resource"
+	resourceschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
@@ -32,18 +35,80 @@ type mockProviderAPI struct {
 	tls                    map[string]any
 	connectors             map[string]map[string]any
 	actions                map[string]map[string]any
+	sources                map[string]map[string]any
 	rules                  map[string]map[string]any
 	authenticationUsers    map[string]map[string]any
 	authorizationUsers     map[string]map[string]any
 	authorizationClients   map[string]map[string]any
 	banned                 map[string]map[string]any
 	unsafeRequests         []string
+	sourceCreates          int
+	sourceDeletes          int
+	sourceExternalDeletes  int
+	connectorCreates       int
+	connectorDeletes       int
+	ruleCreates            int
+	ruleDeletes            int
 	tlsReadFailures        int
 	emqxReadFailures       int
+	allowLegacyNames       bool
 }
 
 var testProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
 	"emqxcloud": providerserver.NewProtocol6WithError(&emqxCloudProvider{version: "test", allowHTTP: true}),
+}
+
+type legacyConnectorResource struct {
+	*emqxJSONResource
+}
+
+func (r *legacyConnectorResource) Schema(
+	ctx context.Context,
+	request frameworkresource.SchemaRequest,
+	response *frameworkresource.SchemaResponse,
+) {
+	r.emqxJSONResource.Schema(ctx, request, response)
+	response.Schema.Attributes["name"] = resourceschema.StringAttribute{
+		Required:    true,
+		Description: "Legacy customer-selected Deployment API resource name.",
+	}
+}
+
+type legacyRuleResource struct {
+	*emqxJSONResource
+}
+
+func (r *legacyRuleResource) Schema(
+	ctx context.Context,
+	request frameworkresource.SchemaRequest,
+	response *frameworkresource.SchemaResponse,
+) {
+	r.emqxJSONResource.Schema(ctx, request, response)
+	response.Schema.Attributes["rule_id"] = resourceschema.StringAttribute{
+		Required:    true,
+		Description: "Legacy customer-selected EMQX rule identifier.",
+	}
+}
+
+type legacyEMQXProvider struct {
+	*emqxCloudProvider
+}
+
+func (p *legacyEMQXProvider) Resources(_ context.Context) []func() frameworkresource.Resource {
+	return []func() frameworkresource.Resource{
+		func() frameworkresource.Resource {
+			return &legacyConnectorResource{newConnectorResource().(*emqxJSONResource)}
+		},
+		func() frameworkresource.Resource {
+			return &legacyRuleResource{newRuleResource().(*emqxJSONResource)}
+		},
+	}
+}
+
+var legacyProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
+	"emqxcloud": providerserver.NewProtocol6WithError(&legacyEMQXProvider{
+		emqxCloudProvider: &emqxCloudProvider{version: "0.1.0-test", allowHTTP: true},
+	}),
 }
 
 func TestProviderDeploymentCreateFailureDoesNotLeaveState(t *testing.T) {
@@ -257,21 +322,32 @@ func TestProviderMockLifecycle(t *testing.T) {
 						"status",
 						"running",
 					),
-					resource.TestCheckResourceAttr(
+					resource.TestMatchResourceAttr(
 						"emqxcloud_connector.http",
 						"name",
-						"terraform_preview",
+						regexp.MustCompile(`^c-[a-z0-9]{6}$`),
 					),
-					resource.TestCheckResourceAttr(
+					resource.TestMatchResourceAttr(
 						"emqxcloud_action.http",
 						"name",
-						"terraform_preview",
+						regexp.MustCompile(`^a-[a-z0-9]{6}$`),
 					),
-					resource.TestCheckResourceAttr(
+					resource.TestMatchResourceAttr(
+						"emqxcloud_connector.mqtt",
+						"name",
+						regexp.MustCompile(`^c-[a-z0-9]{6}$`),
+					),
+					resource.TestMatchResourceAttr(
+						"emqxcloud_source.mqtt",
+						"name",
+						regexp.MustCompile(`^s-[a-z0-9]{6}$`),
+					),
+					resource.TestMatchResourceAttr(
 						"emqxcloud_rule.http",
 						"rule_id",
-						"terraform_preview",
+						regexp.MustCompile(`^r-[a-z0-9]{6}$`),
 					),
+					resource.TestCheckNoResourceAttr("emqxcloud_rule.http", "name"),
 					resource.TestCheckResourceAttr(
 						"emqxcloud_authentication_user.current",
 						"is_superuser",
@@ -302,13 +378,15 @@ func TestProviderMockLifecycle(t *testing.T) {
 						"config_json",
 						`{"enable":false,"pool_size":2,"url":"https://example.com"}`,
 					),
-					resource.TestCheckResourceAttr(
+					resource.TestMatchResourceAttr(
 						"emqxcloud_rule.http",
 						"config_json",
-						`{"actions":["http:terraform_preview"],`+
-							`"description":"updated","enable":false,`+
-							`"name":"terraform_preview",`+
-							`"sql":"SELECT * FROM \"terraform/preview\""}`,
+						regexp.MustCompile(`"actions":\["http:a-[a-z0-9]{6}"\]`),
+					),
+					resource.TestMatchResourceAttr(
+						"emqxcloud_source.mqtt",
+						"config_json",
+						regexp.MustCompile(`"connector":"c-[a-z0-9]{6}"`),
 					),
 					resource.TestCheckResourceAttr(
 						"emqxcloud_authentication_user.current",
@@ -341,6 +419,8 @@ func TestProviderMockLifecycle(t *testing.T) {
 			{
 				PreConfig: func() {
 					mockAPI.mu.Lock()
+					mockAPI.sourceExternalDeletes += len(mockAPI.sources)
+					clear(mockAPI.sources)
 					clear(mockAPI.authenticationUsers)
 					clear(mockAPI.authorizationUsers)
 					clear(mockAPI.authorizationClients)
@@ -441,11 +521,142 @@ data "emqxcloud_projects" "current" {}
 	})
 }
 
+func TestProviderRejectsCustomerSelectedEMQXNames(t *testing.T) {
+	tests := map[string]struct {
+		resource string
+		expected string
+	}{
+		"connector name": {
+			resource: `resource "emqxcloud_connector" "current" {
+  type        = "http"
+  name        = "customer"
+  config_json = jsonencode({"url": "https://example.com"})
+}`,
+			expected: "Invalid Configuration for Read-Only Attribute",
+		},
+		"rule id": {
+			resource: `resource "emqxcloud_rule" "current" {
+  rule_id    = "customer"
+  config_json = jsonencode({"sql": "SELECT * FROM t"})
+}`,
+			expected: "Invalid Configuration for Read-Only Attribute",
+		},
+		"rule name": {
+			resource: `resource "emqxcloud_rule" "current" {
+  name        = "customer"
+  config_json = jsonencode({"sql": "SELECT * FROM t"})
+}`,
+			expected: "Unsupported argument",
+		},
+		"rule id in JSON": {
+			resource: `resource "emqxcloud_rule" "current" {
+  config_json = jsonencode({"id": "customer", "sql": "SELECT * FROM t"})
+}`,
+			expected: `config_json must not contain "id"`,
+		},
+		"rule name in JSON": {
+			resource: `resource "emqxcloud_rule" "current" {
+  config_json = jsonencode({"name": "customer", "sql": "SELECT * FROM t"})
+}`,
+			expected: `config_json must not contain "name"`,
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			resource.UnitTest(t, resource.TestCase{
+				ProtoV6ProviderFactories: testProviderFactories,
+				Steps: []resource.TestStep{{
+					Config: `
+provider "emqxcloud" {
+  deployment_endpoint   = "https://example.com/api/v5"
+  deployment_api_key    = "key"
+  deployment_api_secret = "secret"
+}
+` + test.resource,
+					ExpectError: regexp.MustCompile(test.expected),
+				}},
+			})
+		})
+	}
+}
+
+func TestProviderPreservesLegacyEMQXIdentityState(t *testing.T) {
+	mockAPI := newMockProviderAPI()
+	mockAPI.allowLegacyNames = true
+	server := httptest.NewServer(mockAPI)
+	defer server.Close()
+
+	legacyConfig := fmt.Sprintf(`
+provider "emqxcloud" {
+  deployment_endpoint   = %q
+  deployment_api_key    = "key"
+  deployment_api_secret = "secret"
+}
+
+resource "emqxcloud_connector" "current" {
+  type = "http"
+  name = "legacy_preview"
+  config_json = jsonencode({
+    enable = true
+    url    = "https://example.com"
+  })
+}
+
+resource "emqxcloud_rule" "current" {
+  rule_id = "legacy_rule"
+  config_json = jsonencode({
+    sql         = "SELECT * FROM \"legacy/#\""
+    actions     = []
+    description = "legacy"
+    enable      = true
+  })
+}
+`, server.URL+"/api/v5")
+	currentConfig := strings.NewReplacer(
+		`  name = "legacy_preview"`+"\n", "",
+		`  rule_id = "legacy_rule"`+"\n", "",
+	).Replace(legacyConfig)
+	checkIdentity := resource.ComposeTestCheckFunc(
+		resource.TestCheckResourceAttr(
+			"emqxcloud_connector.current", "name", "legacy_preview",
+		),
+		resource.TestCheckResourceAttr(
+			"emqxcloud_rule.current", "rule_id", "legacy_rule",
+		),
+		resource.TestCheckNoResourceAttr("emqxcloud_rule.current", "name"),
+		func(_ *terraform.State) error {
+			return mockAPI.checkIdentityRequestCounts(1, 0)
+		},
+	)
+
+	resource.UnitTest(t, resource.TestCase{
+		CheckDestroy: func(_ *terraform.State) error {
+			return mockAPI.checkDestroyed()
+		},
+		Steps: []resource.TestStep{
+			{
+				ProtoV6ProviderFactories: legacyProviderFactories,
+				Config:                   legacyConfig,
+				Check:                    checkIdentity,
+			},
+			{
+				ProtoV6ProviderFactories: testProviderFactories,
+				Config:                   currentConfig,
+				Check:                    checkIdentity,
+			},
+		},
+	})
+	if err := mockAPI.checkIdentityRequestCounts(1, 1); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func newMockProviderAPI() *mockProviderAPI {
 	return &mockProviderAPI{
 		deployment:           mockDeployment(),
 		connectors:           make(map[string]map[string]any),
 		actions:              make(map[string]map[string]any),
+		sources:              make(map[string]map[string]any),
 		rules:                make(map[string]map[string]any),
 		authenticationUsers:  make(map[string]map[string]any),
 		authorizationUsers:   make(map[string]map[string]any),
@@ -622,9 +833,41 @@ func (m *mockProviderAPI) serveEMQX(writer http.ResponseWriter, request *http.Re
 			writeJSON(writer, http.StatusBadRequest, map[string]any{"code": "BAD_JSON"})
 			return
 		}
-		id := fmt.Sprint(payload["id"])
-		if parts[0] != "rules" {
-			id = fmt.Sprintf("%s:%s", payload["type"], payload["name"])
+		var id string
+		if parts[0] == "rules" {
+			ruleID, idExists := payload["id"]
+			_, nameExists := payload["name"]
+			id = fmt.Sprint(ruleID)
+			if !idExists || nameExists || (!m.allowLegacyNames && !regexp.MustCompile(
+				`^r-[a-z0-9]{6}$`,
+			).MatchString(id)) {
+				writeJSON(writer, http.StatusBadRequest, map[string]any{"code": "BAD_RULE_ID"})
+				return
+			}
+			m.ruleCreates++
+		} else {
+			name := fmt.Sprint(payload["name"])
+			prefix := map[string]string{
+				"connectors": "c-",
+				"actions":    "a-",
+				"sources":    "s-",
+			}[parts[0]]
+			if prefix == "" || (!m.allowLegacyNames && !regexp.MustCompile(
+				"^"+regexp.QuoteMeta(prefix)+`[a-z0-9]{6}$`,
+			).MatchString(name)) {
+				writeJSON(writer, http.StatusBadRequest, map[string]any{"code": "BAD_NAME"})
+				return
+			}
+			id = fmt.Sprintf("%s:%s", payload["type"], name)
+		}
+		if _, exists := collection[id]; exists {
+			writeJSON(writer, http.StatusBadRequest, map[string]any{"code": "ALREADY_EXISTS"})
+			return
+		}
+		if parts[0] == "connectors" {
+			m.connectorCreates++
+		} else if parts[0] == "sources" {
+			m.sourceCreates++
 		}
 		collection[id] = payload
 		writeJSON(writer, http.StatusCreated, payload)
@@ -666,11 +909,37 @@ func (m *mockProviderAPI) serveEMQX(writer http.ResponseWriter, request *http.Re
 			writeJSON(writer, http.StatusBadRequest, map[string]any{"code": "BAD_JSON"})
 			return
 		}
+		if parts[0] == "rules" {
+			_, hasID := payload["id"]
+			_, hasName := payload["name"]
+			if hasID || hasName {
+				writeJSON(writer, http.StatusBadRequest, map[string]any{"code": "IMMUTABLE_FIELD"})
+				return
+			}
+		} else if payload["type"] != nil || payload["name"] != nil {
+			writeJSON(writer, http.StatusBadRequest, map[string]any{"code": "IMMUTABLE_FIELD"})
+			return
+		}
 		for key, value := range payload {
 			current[key] = value
 		}
 		writeJSON(writer, http.StatusOK, current)
 	case http.MethodDelete:
+		if parts[0] == "connectors" {
+			m.connectorDeletes++
+		}
+		if parts[0] == "rules" {
+			m.ruleDeletes++
+		}
+		if parts[0] == "sources" {
+			query := request.URL.Query()
+			if len(query) != 1 || query.Get("also_delete_dep_actions") != "false" {
+				m.unsafeRequests = append(m.unsafeRequests, request.Method+" "+request.URL.RequestURI())
+				writeJSON(writer, http.StatusBadRequest, map[string]any{"code": "UNSAFE_DELETE"})
+				return
+			}
+			m.sourceDeletes++
+		}
 		delete(collection, id)
 		writer.WriteHeader(http.StatusNoContent)
 	default:
@@ -884,6 +1153,8 @@ func (m *mockProviderAPI) collection(name string) map[string]map[string]any {
 		return m.connectors
 	case "actions":
 		return m.actions
+	case "sources":
+		return m.sources
 	case "rules":
 		return m.rules
 	default:
@@ -898,12 +1169,21 @@ func (m *mockProviderAPI) checkDestroyed() error {
 	if m.tls != nil {
 		return fmt.Errorf("TLS still exists after destroy")
 	}
-	if len(m.connectors) != 0 || len(m.actions) != 0 || len(m.rules) != 0 {
+	if len(m.connectors) != 0 || len(m.actions) != 0 || len(m.sources) != 0 || len(m.rules) != 0 {
 		return fmt.Errorf(
-			"EMQX resources remain after destroy: connectors=%d actions=%d rules=%d",
+			"EMQX resources remain after destroy: connectors=%d actions=%d sources=%d rules=%d",
 			len(m.connectors),
 			len(m.actions),
+			len(m.sources),
 			len(m.rules),
+		)
+	}
+	if m.sourceDeletes+m.sourceExternalDeletes != m.sourceCreates {
+		return fmt.Errorf(
+			"Source create/delete/external-delete requests: %d/%d/%d",
+			m.sourceCreates,
+			m.sourceDeletes,
+			m.sourceExternalDeletes,
 		)
 	}
 	if len(m.authenticationUsers) != 0 || len(m.authorizationUsers) != 0 ||
@@ -927,6 +1207,24 @@ func (m *mockProviderAPI) checkNoDeploymentCreates() error {
 	defer m.mu.Unlock()
 	if m.deploymentCreate != nil {
 		return errors.New("deployment was created through the unused Platform alias")
+	}
+	return nil
+}
+
+func (m *mockProviderAPI) checkIdentityRequestCounts(creates, deletes int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.connectorCreates != creates || m.connectorDeletes != deletes ||
+		m.ruleCreates != creates || m.ruleDeletes != deletes {
+		return fmt.Errorf(
+			"Connector and Rule create/delete requests: %d/%d and %d/%d, expected %d/%d each",
+			m.connectorCreates,
+			m.connectorDeletes,
+			m.ruleCreates,
+			m.ruleDeletes,
+			creates,
+			deletes,
+		)
 	}
 	return nil
 }
@@ -1029,7 +1327,6 @@ resource "emqxcloud_deployment_tls" "current" {
 
 resource "emqxcloud_connector" "http" {
   type = "http"
-  name = "terraform_preview"
   config_json = jsonencode({
     enable    = %[4]t
     pool_size = %[5]d
@@ -1039,7 +1336,6 @@ resource "emqxcloud_connector" "http" {
 
 resource "emqxcloud_action" "http" {
   type = "http"
-  name = "terraform_preview"
   config_json = jsonencode({
     connector = emqxcloud_connector.http.name
     enable    = %[4]t
@@ -1052,10 +1348,28 @@ resource "emqxcloud_action" "http" {
   })
 }
 
-resource "emqxcloud_rule" "http" {
-  rule_id = "terraform_preview"
+resource "emqxcloud_connector" "mqtt" {
+  type = "mqtt"
   config_json = jsonencode({
-    name        = "terraform_preview"
+    enable = %[4]t
+    server = "broker.emqx.io:1883"
+  })
+}
+
+resource "emqxcloud_source" "mqtt" {
+  type = "mqtt"
+  config_json = jsonencode({
+    connector = emqxcloud_connector.mqtt.name
+    enable    = %[4]t
+    parameters = {
+      qos   = 0
+      topic = "emqx/esp32/#"
+    }
+  })
+}
+
+resource "emqxcloud_rule" "http" {
+  config_json = jsonencode({
     sql         = "SELECT * FROM \"terraform/preview\""
     actions     = ["${emqxcloud_action.http.type}:${emqxcloud_action.http.name}"]
     enable      = %[4]t
@@ -1131,7 +1445,6 @@ provider "emqxcloud" {
 
 resource "emqxcloud_connector" "current" {
   type        = "http"
-  name        = "polling_failure"
   config_json = jsonencode({"enable": true, "url": "https://example.com"})
 }
 `, endpoint+"/api/v5")
@@ -1179,7 +1492,6 @@ resource "emqxcloud_connector" "current" {
   provider = emqxcloud.target
 
   type = "http"
-  name = "alias_test"
   config_json = jsonencode({
     enable = true
     url    = "https://example.com"

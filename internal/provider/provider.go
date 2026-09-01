@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/emqx/terraform-provider-emqxcloud/internal/client"
+	"github.com/hashicorp/terraform-plugin-framework/action"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	frameworkprovider "github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
@@ -164,6 +165,13 @@ func (p *emqxCloudProvider) Configure(
 
 	response.DataSourceData = providerData
 	response.ResourceData = providerData
+	response.ActionData = providerData
+}
+
+func (p *emqxCloudProvider) Actions(_ context.Context) []func() action.Action {
+	return []func() action.Action{
+		newResetAuthorizationCacheAction,
+	}
 }
 
 func (p *emqxCloudProvider) DataSources(_ context.Context) []func() datasource.DataSource {
@@ -180,6 +188,7 @@ func (p *emqxCloudProvider) Resources(_ context.Context) []func() resource.Resou
 		newDeploymentTLSResource,
 		newConnectorResource,
 		newActionResource,
+		newSourceResource,
 		newRuleResource,
 		newAuthenticationUserResource,
 		newAuthorizationUserResource,

@@ -23,7 +23,7 @@ terraform {
   required_providers {
     emqxcloud = {
       source  = "emqx/emqxcloud"
-      version = "~> 0.1.0"
+      version = "~> 0.2.0"
     }
   }
 }
@@ -87,6 +87,9 @@ secrets are. Treat both as credentials. Sensitive values and opaque JSON can rem
 ## Lifecycle Notes
 
 - `emqxcloud_deployment` creates Dedicated Flex deployments but never deletes them.
-- Terraform import is not supported in v0.1.0.
-- Delete dependent resources in Rule, Action, Connector order.
+- Terraform import is not supported in v0.2.0.
+- Connector, Action, and Source names plus Rule IDs are generated once by the Provider. Existing v0.1 identities
+  remain unchanged after their customer-selected identity fields are removed from configuration.
+- Delete dependent resources in Rule, then Action or Source, then Connector order.
+- `emqxcloud_reset_authorization_cache` requires Terraform 1.14 or later and runs only when explicitly invoked.
 - Platform deployment credentials do not provide Deployment API credentials. Configure each deployment separately.

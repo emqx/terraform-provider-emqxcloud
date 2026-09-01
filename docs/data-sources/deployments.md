@@ -15,7 +15,7 @@ terraform {
   required_providers {
     emqxcloud = {
       source  = "emqx/emqxcloud"
-      version = "~> 0.1.0"
+      version = "~> 0.2.0"
     }
   }
 }
