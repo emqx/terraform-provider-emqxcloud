@@ -2,7 +2,7 @@
 
 set -eu
 
-version="${1:-0.1.0}"
+version="${1:-0.2.0}"
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 provider_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 "$provider_dir/scripts/check-version.sh" "$version"

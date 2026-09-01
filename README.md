@@ -10,9 +10,10 @@ credentials are never shared or used as fallback between them.
 | API | Terraform objects |
 | --- | --- |
 | Platform API | Projects and deployments data sources, Dedicated Flex deployment lifecycle, deployment TLS |
-| Deployment API | Connector, Action, Rule, authentication user, username/clientid authorization, banned entry |
+| Deployment API | Connector, Action, Source, Rule, authorization-cache reset, authentication user, username/clientid authorization, banned entry |
 
-The Provider uses Terraform Plugin Protocol 6 and requires Terraform 1.0 or later.
+The Provider uses Terraform Plugin Protocol 6 and requires Terraform 1.0 or later. Invoking
+`emqxcloud_reset_authorization_cache` requires Terraform 1.14 or later.
 
 ## Registry installation
 
@@ -23,7 +24,7 @@ terraform {
   required_providers {
     emqxcloud = {
       source  = "emqx/emqxcloud"
-      version = "~> 0.1.0"
+      version = "~> 0.2.0"
     }
   }
 }
@@ -81,7 +82,8 @@ Runnable examples are under [`examples/`](examples/):
 | Directory | Contents |
 | --- | --- |
 | `platform/` | Project and deployment data sources, deployment lifecycle, and TLS |
-| `deployment/` | Authentication, authorization (ACL), banned entries, and data integration |
+| `deployment/` | Authentication, authorization (ACL), banned entries, data integration, and an MQTT Source |
+| `actions/` | Explicit Terraform 1.14+ authorization-cache reset invocation |
 
 Start with the read-only `platform/data-sources` example. The other examples can change remote resources or incur
 charges and must only be run against a dedicated non-production target.
@@ -91,13 +93,22 @@ charges and must only be run against a dedicated non-production target.
 - `emqxcloud_deployment` creates only Dedicated Flex deployments and can start or stop them. It never deletes a
   deployment. Removing management requires an explicit state transfer, followed by manual remote ownership and
   cleanup.
-- v0.1.0 does not support Terraform import.
-- Delete dependent data-integration resources in Rule, Action, Connector order.
+- v0.2.0 does not support Terraform import.
+- Connector, Action, and Source names plus Rule IDs are generated once by the Provider as `c-`, `a-`, `s-`, or
+  `r-` followed by six lowercase letters or digits. Put human-readable descriptions and functional settings in
+  `config_json` and use resource references for dependencies.
+- Delete dependent data-integration resources in Rule, then Action or Source, then Connector order.
 - TLS certificates, private keys, passwords, and opaque JSON can remain in Terraform state. `Sensitive` suppresses
   normal CLI display but does not encrypt state.
 - Use an encrypted remote backend with access controls. Never commit state, credentials, certificates, or keys.
 
-See the generated [Registry documentation](docs/index.md) for every Provider, data source, and resource argument.
+See the generated [Registry documentation](docs/index.md) for every Provider, data source, resource, and Action.
+
+### Upgrading from v0.1.0
+
+Before planning with v0.2.0, remove Connector and Action `name`, Rule `rule_id`, and Rule `config_json.name` from
+configuration. Existing identities remain unchanged in state and are not replaced; only newly created objects use
+the generated eight-character identities.
 
 ## Local development installation
 
@@ -109,15 +120,15 @@ Requirements:
 - Terraform 1.0 or later
 - Git
 
-Build the v0.1.0 mirror:
+Build the v0.2.0 mirror:
 
 ```shell
 git clone https://github.com/emqx/terraform-provider-emqxcloud.git
 cd terraform-provider-emqxcloud
-./scripts/build-release.sh 0.1.0
+./scripts/build-release.sh 0.2.0
 ```
 
-The script creates binaries under `dist/mirror/registry.terraform.io/emqx/emqxcloud/0.1.0/` for Darwin and Linux
+The script creates binaries under `dist/mirror/registry.terraform.io/emqx/emqxcloud/0.2.0/` for Darwin and Linux
 on AMD64 and ARM64. Create a Terraform CLI configuration file with the absolute mirror path:
 
 ```hcl

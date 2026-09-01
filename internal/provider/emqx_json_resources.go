@@ -3,13 +3,17 @@ package provider
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/emqx/terraform-provider-emqxcloud/internal/client"
@@ -24,16 +28,20 @@ import (
 )
 
 const (
-	defaultEMQXPollInterval = time.Second
-	defaultEMQXTimeout      = time.Minute
-	maskedValue             = "******"
+	defaultEMQXPollInterval   = time.Second
+	defaultEMQXTimeout        = time.Minute
+	generatedNameSuffixLength = 6
+	generatedNameSuffixSpace  = 2_176_782_336 // 36^6
+	maskedValue               = "******"
 )
 
 type emqxJSONResourceSpec struct {
-	typeSuffix string
-	collection string
-	named      bool
-	toggle     bool
+	typeSuffix  string
+	collection  string
+	namePrefix  string
+	named       bool
+	toggle      bool
+	deleteQuery url.Values
 }
 
 type emqxJSONResource struct {
@@ -69,6 +77,7 @@ func newConnectorResource() resource.Resource {
 	return newEMQXJSONResource(emqxJSONResourceSpec{
 		typeSuffix: "connector",
 		collection: "/connectors",
+		namePrefix: "c-",
 		named:      true,
 		toggle:     true,
 	})
@@ -78,8 +87,20 @@ func newActionResource() resource.Resource {
 	return newEMQXJSONResource(emqxJSONResourceSpec{
 		typeSuffix: "action",
 		collection: "/actions",
+		namePrefix: "a-",
 		named:      true,
 		toggle:     true,
+	})
+}
+
+func newSourceResource() resource.Resource {
+	return newEMQXJSONResource(emqxJSONResourceSpec{
+		typeSuffix:  "source",
+		collection:  "/sources",
+		namePrefix:  "s-",
+		named:       true,
+		toggle:      true,
+		deleteQuery: url.Values{"also_delete_dep_actions": {"false"}},
 	})
 }
 
@@ -87,6 +108,7 @@ func newRuleResource() resource.Resource {
 	return newEMQXJSONResource(emqxJSONResourceSpec{
 		typeSuffix: "rule",
 		collection: "/rules",
+		namePrefix: "r-",
 	})
 }
 
@@ -112,6 +134,7 @@ func (r *emqxJSONResource) Schema(
 	response *resource.SchemaResponse,
 ) {
 	requiresReplace := []planmodifier.String{stringplanmodifier.RequiresReplace()}
+	useState := []planmodifier.String{stringplanmodifier.UseStateForUnknown()}
 	attributes := map[string]schema.Attribute{
 		"config_json": schema.StringAttribute{
 			Required:    true,
@@ -126,15 +149,15 @@ func (r *emqxJSONResource) Schema(
 			Description:   "Deployment API resource type.",
 		}
 		attributes["name"] = schema.StringAttribute{
-			Required:      true,
-			PlanModifiers: requiresReplace,
-			Description:   "Deployment API resource name.",
+			Computed:      true,
+			PlanModifiers: useState,
+			Description:   "Provider-generated Deployment API resource name.",
 		}
 	} else {
 		attributes["rule_id"] = schema.StringAttribute{
-			Required:      true,
-			PlanModifiers: requiresReplace,
-			Description:   "EMQX rule identifier.",
+			Computed:      true,
+			PlanModifiers: useState,
+			Description:   "Provider-generated EMQX rule identifier.",
 		}
 	}
 	response.Schema = schema.Schema{
@@ -156,9 +179,6 @@ func (r *emqxJSONResource) ValidateConfig(
 
 	if r.spec.named {
 		validateNonEmptyString(state.Type, "type", &response.Diagnostics)
-		validateNonEmptyString(state.Name, "name", &response.Diagnostics)
-	} else {
-		validateNonEmptyString(state.RuleID, "rule_id", &response.Diagnostics)
 	}
 	if state.ConfigJSON.IsNull() || state.ConfigJSON.IsUnknown() {
 		return
@@ -178,7 +198,7 @@ func (r *emqxJSONResource) ValidateConfig(
 				path.Root("config_json"),
 				"Duplicated identity field",
 				fmt.Sprintf(
-					"config_json must not contain %q; configure it with the resource attribute.",
+					"config_json must not contain %q; it is managed by the Provider.",
 					identityField,
 				),
 			)
@@ -207,25 +227,65 @@ func (r *emqxJSONResource) Create(
 	if response.Diagnostics.HasError() || !r.requireConfigured(&response.Diagnostics) {
 		return
 	}
+	if r.spec.named && (state.Name.IsNull() || state.Name.IsUnknown() || state.Name.ValueString() == "") {
+		name, err := generateEMQXResourceName(r.spec.namePrefix)
+		if err != nil {
+			response.Diagnostics.AddError("Unable to generate EMQX resource name", err.Error())
+			return
+		}
+		state.Name = types.StringValue(name)
+	} else if !r.spec.named && (state.RuleID.IsNull() || state.RuleID.IsUnknown() || state.RuleID.ValueString() == "") {
+		ruleID, err := generateEMQXResourceName(r.spec.namePrefix)
+		if err != nil {
+			response.Diagnostics.AddError("Unable to generate EMQX rule id", err.Error())
+			return
+		}
+		state.RuleID = types.StringValue(ruleID)
+	}
 
 	payload, err := r.createPayload(state)
 	if err != nil {
 		response.Diagnostics.AddError("Invalid JSON configuration", err.Error())
 		return
 	}
-	_, err = r.deployment.Do(ctx, client.Request{
+	var createdRule struct {
+		ID string `json:"id"`
+	}
+	createRequest := client.Request{
 		Method: http.MethodPost,
 		Path:   r.spec.collection,
 		Body:   payload,
-	})
+	}
+	if !r.spec.named {
+		createRequest.Result = &createdRule
+	}
+	statusCode, err := r.deployment.Do(ctx, createRequest)
 	if err != nil {
-		response.Diagnostics.AddError("Unable to create EMQX resource", err.Error())
+		if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices {
+			// The write succeeded even though its response could not be read or decoded.
+			response.Diagnostics.Append(r.setTerraformState(ctx, &response.State, state)...)
+			if response.Diagnostics.HasError() {
+				return
+			}
+		}
+		response.Diagnostics.AddError(
+			"Unable to create EMQX resource",
+			fmt.Sprintf("Create with generated %s identity %q failed: %v", r.spec.typeSuffix, r.identity(state), err),
+		)
 		return
 	}
+	createdRuleIDMismatch := !r.spec.named && createdRule.ID != "" && createdRule.ID != state.RuleID.ValueString()
 
 	// Persist the remote identity before polling so a failed create remains destroyable.
 	response.Diagnostics.Append(r.setTerraformState(ctx, &response.State, state)...)
 	if response.Diagnostics.HasError() {
+		return
+	}
+	if createdRuleIDMismatch {
+		response.Diagnostics.AddError(
+			"Unable to verify created EMQX rule",
+			"The Deployment API returned an id that did not match the generated rule id; the generated identity was retained for safe cleanup.",
+		)
 		return
 	}
 
@@ -329,6 +389,7 @@ func (r *emqxJSONResource) Delete(
 	_, err := r.deployment.Do(ctx, client.Request{
 		Method: http.MethodDelete,
 		Path:   r.itemPath(state),
+		Query:  r.spec.deleteQuery,
 	})
 	if client.IsStatus(err, http.StatusNotFound) {
 		return
@@ -469,6 +530,25 @@ func (r *emqxJSONResource) waitForRemote(
 			return "", err
 		}
 		if exists {
+			if !r.spec.named {
+				if remoteID, present := remote["id"]; present {
+					id, ok := remoteID.(string)
+					if !ok || id != state.RuleID.ValueString() {
+						return "", errors.New("EMQX rule id does not match the state identity")
+					}
+				}
+			}
+			if r.spec.named {
+				if remoteName, present := remote["name"]; present {
+					name, ok := remoteName.(string)
+					if !ok || name != state.Name.ValueString() {
+						return "", fmt.Errorf(
+							"EMQX resource name does not match expected name %q",
+							state.Name.ValueString(),
+						)
+					}
+				}
+			}
 			projected, matches, err := projectVisibleJSON(
 				state.ConfigJSON.ValueString(),
 				remote,
@@ -504,7 +584,16 @@ func (r *emqxJSONResource) identityFields() []string {
 	if r.spec.named {
 		return []string{"type", "name"}
 	}
-	return []string{"id"}
+	return []string{"id", "name"}
+}
+
+func generateEMQXResourceName(prefix string) (string, error) {
+	value, err := rand.Int(rand.Reader, big.NewInt(generatedNameSuffixSpace))
+	if err != nil {
+		return "", fmt.Errorf("generate random suffix: %w", err)
+	}
+	suffix := value.Text(36)
+	return prefix + strings.Repeat("0", generatedNameSuffixLength-len(suffix)) + suffix, nil
 }
 
 func parseJSONObject(input string) (map[string]any, error) {

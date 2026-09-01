@@ -1,0 +1,16 @@
+---
+subcategory: "Deployment"
+---
+
+# {{ .Name }} Action
+
+{{ .Description }}
+
+~> **Warning:** This Action resets the Deployment authorization cache immediately. It requires Terraform 1.14 or
+later, has no Terraform state, and runs only when explicitly invoked or attached to an action trigger.
+
+## Example Usage
+
+{{ tffile "examples/actions/emqxcloud_reset_authorization_cache/action.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
