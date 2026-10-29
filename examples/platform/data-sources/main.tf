@@ -4,7 +4,7 @@ terraform {
   required_providers {
     emqxcloud = {
       source  = "emqx/emqxcloud"
-      version = "~> 0.2.0"
+      version = "~> 0.3.0"
     }
   }
 }
@@ -33,4 +33,8 @@ output "projects" {
 
 output "deployments" {
   value = data.emqxcloud_deployments.current.deployments
+}
+
+output "connection_info" {
+  value = try(data.emqxcloud_deployment.selected[0].connection_info, null)
 }

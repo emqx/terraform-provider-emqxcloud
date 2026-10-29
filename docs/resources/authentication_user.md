@@ -17,7 +17,7 @@ terraform {
   required_providers {
     emqxcloud = {
       source  = "emqx/emqxcloud"
-      version = "~> 0.2.0"
+      version = "~> 0.3.0"
     }
   }
 }
@@ -102,4 +102,4 @@ resource "emqxcloud_banned" "current" {
 
 ## Import
 
-Terraform import is not supported in v0.2.0.
+Terraform import is not supported.

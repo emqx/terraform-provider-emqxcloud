@@ -12,7 +12,7 @@ Thank you for contributing to the EMQX Cloud Terraform Provider. Participation i
 
 ## Development
 
-Use Go 1.25 and Terraform 1.0 or later. Run the relevant focused tests while editing, then run:
+Use Go 1.26.10 or later and Terraform 1.0 or later. Run the relevant focused tests while editing, then run:
 
 ```shell
 test -z "$(gofmt -l .)"

@@ -23,35 +23,46 @@ import (
 )
 
 type mockProviderAPI struct {
-	mu                     sync.Mutex
-	deployment             map[string]any
-	deploymentCreate       map[string]any
-	operations             []string
-	deploymentDeletes      int
-	createFailure          bool
-	operationFailure       bool
-	deploymentReadFailures int
-	ignoreDeploymentName   bool
-	tls                    map[string]any
-	connectors             map[string]map[string]any
-	actions                map[string]map[string]any
-	sources                map[string]map[string]any
-	rules                  map[string]map[string]any
-	authenticationUsers    map[string]map[string]any
-	authorizationUsers     map[string]map[string]any
-	authorizationClients   map[string]map[string]any
-	banned                 map[string]map[string]any
-	unsafeRequests         []string
-	sourceCreates          int
-	sourceDeletes          int
-	sourceExternalDeletes  int
-	connectorCreates       int
-	connectorDeletes       int
-	ruleCreates            int
-	ruleDeletes            int
-	tlsReadFailures        int
-	emqxReadFailures       int
-	allowLegacyNames       bool
+	mu                        sync.Mutex
+	deployment                map[string]any
+	deploymentCreate          map[string]any
+	operations                []string
+	deploymentDeletes         int
+	createFailure             bool
+	operationFailure          bool
+	deploymentReadFailures    int
+	ignoreDeploymentName      bool
+	deploymentEndpoint        string
+	omitDeploymentAPIEndpoint bool
+	deploymentCreateID        string
+	deploymentCreates         int
+	apiKeyCreates             int
+	apiKeyPayload             *createDeploymentAPIKeyRequest
+	issuedAPIKey              string
+	issuedAPISecret           string
+	userCreateFailures        int
+	omitIssuedSecret          bool
+	dropIssuedResponse        bool
+	tls                       map[string]any
+	connectors                map[string]map[string]any
+	actions                   map[string]map[string]any
+	sources                   map[string]map[string]any
+	rules                     map[string]map[string]any
+	authenticationUsers       map[string]map[string]any
+	authorizationUsers        map[string]map[string]any
+	authorizationClients      map[string]map[string]any
+	banned                    map[string]map[string]any
+	unsafeRequests            []string
+	sourceCreates             int
+	sourceDeletes             int
+	sourceExternalDeletes     int
+	connectorCreates          int
+	connectorDeletes          int
+	ruleCreates               int
+	ruleDeletes               int
+	tlsReadFailures           int
+	emqxReadFailures          int
+	allowLegacyNames          bool
 }
 
 var testProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
@@ -187,6 +198,7 @@ func TestProviderDeploymentLifecycleUsesSelectedPlatformAlias(t *testing.T) {
 	targetAPI.ignoreDeploymentName = true
 	targetServer := httptest.NewServer(targetAPI)
 	defer targetServer.Close()
+	targetAPI.deploymentEndpoint = targetServer.URL + "/api/v5"
 
 	runningConfig := deploymentConfig(unusedServer.URL, targetServer.URL, "running", 1000)
 	stoppedConfig := deploymentConfig(unusedServer.URL, targetServer.URL, "stopped", 1000)
@@ -211,18 +223,22 @@ func TestProviderDeploymentLifecycleUsesSelectedPlatformAlias(t *testing.T) {
 					resource.TestCheckResourceAttr(
 						"emqxcloud_deployment.current", "status", "running",
 					),
+					resource.TestCheckResourceAttr(
+						"emqxcloud_deployment.current", "connection_info.api_endpoint", targetServer.URL+"/api/v5",
+					),
 				),
 			},
 			{
 				Config: stoppedConfig,
-				Check: resource.TestCheckResourceAttr(
-					"emqxcloud_deployment.current", "status", "stopped",
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("emqxcloud_deployment.current", "status", "stopped"),
+					resource.TestCheckNoResourceAttr("emqxcloud_deployment.current", "connection_info.api_endpoint"),
 				),
 			},
 			{
 				Config: runningConfig,
 				Check: resource.TestCheckResourceAttr(
-					"emqxcloud_deployment.current", "status", "running",
+					"emqxcloud_deployment.current", "connection_info.api_endpoint", targetServer.URL+"/api/v5",
 				),
 			},
 			{
@@ -290,6 +306,7 @@ func TestProviderMockLifecycle(t *testing.T) {
 	mockAPI := newMockProviderAPI()
 	server := httptest.NewServer(mockAPI)
 	defer server.Close()
+	mockAPI.deploymentEndpoint = server.URL + "/api/v5"
 
 	initialConfig := acceptanceConfig(server.URL, 1, true, "initial")
 	updatedConfig := acceptanceConfig(server.URL, 2, false, "updated")
@@ -316,6 +333,9 @@ func TestProviderMockLifecycle(t *testing.T) {
 						"data.emqxcloud_deployment.current",
 						"name",
 						"preview",
+					),
+					resource.TestCheckResourceAttr(
+						"data.emqxcloud_deployment.current", "connection_info.api_endpoint", server.URL+"/api/v5",
 					),
 					resource.TestCheckResourceAttr(
 						"emqxcloud_deployment_tls.current",
@@ -666,14 +686,32 @@ func newMockProviderAPI() *mockProviderAPI {
 }
 
 func (m *mockProviderAPI) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	apiKey, apiSecret, ok := request.BasicAuth()
-	if !ok || apiKey != "key" || apiSecret != "secret" {
+	expectedKey, expectedSecret := "key", "secret"
+	if strings.HasPrefix(request.URL.Path, "/api/v5/") && m.issuedAPIKey != "" {
+		expectedKey, expectedSecret = m.issuedAPIKey, m.issuedAPISecret
+	}
+	if !ok || apiKey != expectedKey || apiSecret != expectedSecret {
 		writer.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	if strings.HasPrefix(request.URL.Path, "/api/v5/") && m.apiKeyPayload != nil {
+		allowed := false
+		for permissionPath, methods := range m.apiKeyPayload.Whitelist {
+			for _, method := range methods {
+				if method == request.Method && (request.URL.Path == permissionPath || strings.HasPrefix(request.URL.Path, permissionPath+"/")) {
+					allowed = true
+				}
+			}
+		}
+		if !allowed {
+			writer.WriteHeader(http.StatusForbidden)
+			return
+		}
+	}
 
 	writer.Header().Set("Content-Type", "application/json")
 	switch {
@@ -713,12 +751,17 @@ func (m *mockProviderAPI) serveDeployments(writer http.ResponseWriter, request *
 			return
 		}
 		m.deploymentCreate = payload
+		m.deploymentCreates++
+		deploymentID := m.deploymentCreateID
+		if deploymentID == "" {
+			deploymentID = "deployment-managed"
+		}
 		deploymentName := payload["deploymentName"]
 		if m.ignoreDeploymentName {
 			deploymentName = "deployment-managed"
 		}
 		m.deployment = map[string]any{
-			"deploymentID":   "deployment-managed",
+			"deploymentID":   deploymentID,
 			"deploymentName": deploymentName,
 			"deploymentType": payload["deploymentType"],
 			"platform":       payload["platform"],
@@ -753,7 +796,46 @@ func (m *mockProviderAPI) serveDeployment(writer http.ResponseWriter, request *h
 			writer.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		writeJSON(writer, http.StatusOK, m.deployment)
+		record := make(map[string]any, len(m.deployment)+1)
+		for key, value := range m.deployment {
+			record[key] = value
+		}
+		if m.deploymentEndpoint != "" {
+			record["connection"] = nil
+			if m.deployment["status"] == "running" {
+				record["connection"] = map[string]any{
+					"address": "mqtt.example", "apiEndpoint": m.deploymentEndpoint,
+					"ports": []map[string]any{{"protocol": "mqtts", "port": 8883, "status": "running"}},
+				}
+				if m.omitDeploymentAPIEndpoint {
+					delete(record["connection"].(map[string]any), "apiEndpoint")
+				}
+			}
+		}
+		writeJSON(writer, http.StatusOK, record)
+		return
+	}
+	if request.Method == http.MethodPost && len(parts) == 2 && parts[1] == "applications" {
+		var payload createDeploymentAPIKeyRequest
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil || len(payload.Whitelist) == 0 {
+			writer.WriteHeader(http.StatusUnprocessableEntity)
+			return
+		}
+		m.apiKeyCreates++
+		m.apiKeyPayload = &payload
+		m.issuedAPIKey, m.issuedAPISecret = "new-deployment-ak", "new-deployment-sk"
+		issued := deploymentAPIKeyResponse{AppID: m.issuedAPIKey, AppSecret: m.issuedAPISecret}
+		if m.omitIssuedSecret {
+			issued.AppSecret = ""
+		}
+		if m.dropIssuedResponse {
+			connection, _, err := writer.(http.Hijacker).Hijack()
+			if err == nil {
+				_ = connection.Close()
+			}
+			return
+		}
+		writeJSON(writer, http.StatusCreated, issued)
 		return
 	}
 	if request.Method == http.MethodPost && len(parts) == 2 &&
@@ -1000,6 +1082,11 @@ func (m *mockProviderAPI) serveAuthenticationUsers(
 		}
 		if request.Method != http.MethodPost {
 			writer.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if m.userCreateFailures > 0 {
+			m.userCreateFailures--
+			writer.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 		payload, err := decodeObject(request)

@@ -1,5 +1,5 @@
 ---
-{{ if or (eq .Name "emqxcloud_deployment") (eq .Name "emqxcloud_deployment_tls") -}}
+{{ if or (eq .Name "emqxcloud_deployment") (eq .Name "emqxcloud_deployment_tls") (eq .Name "emqxcloud_deployment_api_key") -}}
 subcategory: "Platform"
 {{ else -}}
 subcategory: "Deployment"
@@ -14,6 +14,28 @@ subcategory: "Deployment"
 
 ~> **Warning:** This resource never deletes a remote deployment. A deployment can continue to incur charges after
 it is removed from configuration. Transfer its Terraform state deliberately and assign a manual cleanup owner.
+Clean managed Deployment resources while it is running before deliberately changing its status to stopped.
+{{- else if eq .Name "emqxcloud_deployment_api_key" -}}
+
+~> **Warning:** The once-only App Secret remains in plaintext Terraform state. Refresh retains this local
+issuance record and cannot detect remote revocation or permission drift. Inputs cannot change, and deletion
+and replacement are blocked. Revoke the key in Console before explicitly removing its record from state.
+
+Issuance requires Terraform 1.3 or later for destruction-plan safeguards, deployment management and the
+separate `Deployment_API_Key` Platform service, and a running Dedicated or Dedicated Flex
+deployment. There is a limit of five keys per deployment and two successful creations per hour per Platform
+key. Explicit permissions are required. Uncertain writes are never retried; resolve incomplete issuance in
+Console before attempting any new issuance. Clean dependent resources before revoking their key.
+Existing key inputs must remain known and unchanged during planning, including when a missing deployment would
+otherwise be recreated.
+
+Key creation is serialized within each Provider process, including independent resources sharing that process.
+Coordinate writes to the same deployment from other Provider processes, Terraform runs, Console or API clients;
+this local safeguard does not make backend key updates concurrency-safe.
+
+A failed create with complete returned credentials retains a tainted record. After confirming the exact key is
+usable in Console and both AK/SK are retained, run `terraform untaint` for this resource to keep it. Do not remove
+its state and issue another key. Untainting cannot recover a missing secret.
 {{- else if eq .Name "emqxcloud_deployment_tls" -}}
 
 ~> **Warning:** Certificates and private keys remain in Terraform state. Two-way TLS requires
@@ -46,6 +68,8 @@ collection.
 
 {{ if eq .Name "emqxcloud_deployment" -}}
 {{ tffile "examples/platform/deployment/main.tf" }}
+{{- else if eq .Name "emqxcloud_deployment_api_key" -}}
+{{ tffile "examples/platform/complete/main.tf" }}
 {{- else if eq .Name "emqxcloud_deployment_tls" -}}
 {{ tffile "examples/platform/tls/main.tf" }}
 {{- else if eq .Name "emqxcloud_source" -}}
@@ -60,4 +84,4 @@ collection.
 
 ## Import
 
-Terraform import is not supported in v0.2.0.
+Terraform import is not supported.

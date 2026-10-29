@@ -33,6 +33,7 @@ const (
 
 type deploymentAPIResource struct {
 	deployment *client.Client
+	pending    bool
 }
 
 func (r *deploymentAPIResource) Configure(
@@ -40,10 +41,14 @@ func (r *deploymentAPIResource) Configure(
 	request resource.ConfigureRequest,
 	response *resource.ConfigureResponse,
 ) {
-	r.deployment = deploymentClientFromProviderData(request.ProviderData, &response.Diagnostics)
+	r.deployment, r.pending = deploymentClientFromProviderData(request.ProviderData, &response.Diagnostics)
 }
 
 func (r *deploymentAPIResource) requireConfigured(diagnostics *diag.Diagnostics) bool {
+	if r.pending {
+		diagnostics.AddError("Deployment API credentials are pending", "Deployment endpoint or credentials depend on resource values that are not yet known. Complete those dependencies before changing deployment resources; if the deployment was stopped externally, start it through the Platform API or a targeted deployment apply, then run a full plan.")
+		return false
+	}
 	if r.deployment != nil {
 		return true
 	}
@@ -52,6 +57,15 @@ func (r *deploymentAPIResource) requireConfigured(diagnostics *diag.Diagnostics)
 		"Configure deployment_endpoint, deployment_api_key, and deployment_api_secret.",
 	)
 	return false
+}
+
+func (r *deploymentAPIResource) deferRead(request resource.ReadRequest, response *resource.ReadResponse) bool {
+	if !r.pending {
+		return false
+	}
+	response.State = request.State
+	response.Diagnostics.AddWarning("Deployment API refresh deferred", "Deployment endpoint or credentials are not yet known. Prior state was retained without checking remote changes. Resolve the deployment dependency, then run a full plan to refresh these resources. No environment credentials were used.")
+	return true
 }
 
 type authenticationUserResource struct {
@@ -152,6 +166,9 @@ func (r *authenticationUserResource) Read(
 	request resource.ReadRequest,
 	response *resource.ReadResponse,
 ) {
+	if r.deferRead(request, response) {
+		return
+	}
 	var state authenticationUserModel
 	response.Diagnostics.Append(request.State.Get(ctx, &state)...)
 	if response.Diagnostics.HasError() || !r.requireConfigured(&response.Diagnostics) {
@@ -356,6 +373,9 @@ func (r *authorizationResource) Read(
 	request resource.ReadRequest,
 	response *resource.ReadResponse,
 ) {
+	if r.deferRead(request, response) {
+		return
+	}
 	state, diagnostics := r.terraformState(ctx, request.State)
 	response.Diagnostics.Append(diagnostics...)
 	if response.Diagnostics.HasError() || !r.requireConfigured(&response.Diagnostics) {
@@ -605,6 +625,9 @@ func (r *bannedResource) Read(
 	request resource.ReadRequest,
 	response *resource.ReadResponse,
 ) {
+	if r.deferRead(request, response) {
+		return
+	}
 	var state bannedModel
 	response.Diagnostics.Append(request.State.Get(ctx, &state)...)
 	if response.Diagnostics.HasError() || !r.requireConfigured(&response.Diagnostics) {

@@ -303,6 +303,9 @@ func (r *emqxJSONResource) Read(
 	request resource.ReadRequest,
 	response *resource.ReadResponse,
 ) {
+	if r.deferRead(request, response) {
+		return
+	}
 	state, diagnostics := r.terraformState(ctx, request.State)
 	response.Diagnostics.Append(diagnostics...)
 	if response.Diagnostics.HasError() || !r.requireConfigured(&response.Diagnostics) {
@@ -680,9 +683,9 @@ func projectVisibleValue(configured any, remote any) any {
 
 func deploymentClientFromProviderData(data any, diagnostics interface {
 	AddError(summary string, detail string)
-}) *client.Client {
+}) (*client.Client, bool) {
 	if data == nil {
-		return nil
+		return nil, false
 	}
 	providerData, ok := data.(*ProviderData)
 	if !ok {
@@ -690,7 +693,7 @@ func deploymentClientFromProviderData(data any, diagnostics interface {
 			"Unexpected provider data",
 			fmt.Sprintf("Expected *ProviderData, got %T.", data),
 		)
-		return nil
+		return nil, false
 	}
-	return providerData.Deployment
+	return providerData.Deployment, providerData.DeploymentPending
 }
