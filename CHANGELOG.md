@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.3.0] - Unreleased
+## [0.3.0] - 2026-10-29
 
 - Added `connection_info` to the deployment resource and detail data source, including MQTT listeners and the Deployment API endpoint.
 - Added `emqxcloud_deployment_api_key` to issue one key with explicit permissions and retain its once-only secret in Sensitive state.

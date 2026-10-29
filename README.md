@@ -18,8 +18,6 @@ workflow require Terraform 1.3 or later so deletion and replacement can be block
 
 ## Registry installation
 
-The v0.3.0 changes are under development. Use the local filesystem mirror below until v0.3.0 is published to the Registry.
-
 Add the Provider to your Terraform configuration:
 
 ```terraform
