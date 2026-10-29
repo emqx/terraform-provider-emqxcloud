@@ -28,11 +28,13 @@ const (
 
 type deploymentResource struct {
 	platform     *client.Client
+	pending      bool
 	pollInterval time.Duration
 	timeout      time.Duration
 }
 
 type managedDeploymentModel struct {
+	Connection   types.Object `tfsdk:"connection_info"`
 	ProjectID    types.String `tfsdk:"project_id"`
 	Platform     types.String `tfsdk:"platform"`
 	Region       types.String `tfsdk:"region"`
@@ -81,6 +83,11 @@ func (r *deploymentResource) Schema(
 	response.Schema = schema.Schema{
 		Description: "Create and start or stop one Dedicated Flex deployment. Deletion is not supported.",
 		Attributes: map[string]schema.Attribute{
+			"connection_info": schema.ObjectAttribute{
+				Computed:       true,
+				AttributeTypes: deploymentConnectionTypes,
+				Description:    "MQTT address, listener ports and Deployment API endpoint; object and missing fields are null when unavailable. Use only ports whose status is running.",
+			},
 			"project_id": schema.StringAttribute{
 				Required:    true,
 				Description: "Identifier of the Platform project that owns the deployment.",
@@ -138,7 +145,7 @@ func (r *deploymentResource) Configure(
 	request resource.ConfigureRequest,
 	response *resource.ConfigureResponse,
 ) {
-	r.platform = platformClientFromProviderData(request.ProviderData, &response.Diagnostics)
+	r.platform, r.pending = platformClientFromProviderData(request.ProviderData, &response.Diagnostics)
 }
 
 func (r *deploymentResource) ValidateConfig(
@@ -227,7 +234,7 @@ func (r *deploymentResource) Create(
 ) {
 	var plan managedDeploymentModel
 	response.Diagnostics.Append(request.Plan.Get(ctx, &plan)...)
-	if response.Diagnostics.HasError() || !requirePlatform(r.platform, &response.Diagnostics) {
+	if response.Diagnostics.HasError() || !requirePlatform(r.platform, r.pending, &response.Diagnostics) {
 		return
 	}
 	createCtx, cancel := context.WithTimeout(ctx, defaultDeploymentCreateTimeout)
@@ -296,7 +303,7 @@ func (r *deploymentResource) Read(
 ) {
 	var state managedDeploymentModel
 	response.Diagnostics.Append(request.State.Get(ctx, &state)...)
-	if response.Diagnostics.HasError() || !requirePlatform(r.platform, &response.Diagnostics) {
+	if response.Diagnostics.HasError() || !requirePlatform(r.platform, r.pending, &response.Diagnostics) {
 		return
 	}
 
@@ -322,7 +329,7 @@ func (r *deploymentResource) Update(
 	var state managedDeploymentModel
 	response.Diagnostics.Append(request.Plan.Get(ctx, &plan)...)
 	response.Diagnostics.Append(request.State.Get(ctx, &state)...)
-	if response.Diagnostics.HasError() || !requirePlatform(r.platform, &response.Diagnostics) {
+	if response.Diagnostics.HasError() || !requirePlatform(r.platform, r.pending, &response.Diagnostics) {
 		return
 	}
 
@@ -517,6 +524,7 @@ func deploymentOperation(desiredStatus string) string {
 }
 
 func updateManagedDeployment(model *managedDeploymentModel, current deploymentAPIModel) {
+	model.Connection = terraformDeploymentConnection(current.Connection)
 	if current.ID != "" {
 		model.ID = types.StringValue(current.ID)
 	}

@@ -3,7 +3,7 @@
 set -eu
 
 terraform_bin=${1:-terraform}
-version=${2:-0.2.0}
+version=${2:-0.3.0}
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 workspace=$(mktemp -d "${TMPDIR:-/tmp}/emqxcloud-examples.XXXXXX")
@@ -29,13 +29,19 @@ validate_example() {
   )
 }
 
-find "$root/examples" -name main.tf -print | while IFS= read -r main; do
-  validate_example "$(dirname "$main")"
-done
-
 terraform_version=$("$terraform_bin" version -json)
 terraform_major=$(printf '%s' "$terraform_version" | jq -r '.terraform_version | split(".")[0]')
 terraform_minor=$(printf '%s' "$terraform_version" | jq -r '.terraform_version | split(".")[1]')
+
+find "$root/examples" -name main.tf -print | while IFS= read -r main; do
+  example=$(dirname "$main")
+  if test "$example" = "$root/examples/platform/complete" && test "$terraform_major" -eq 1 && test "$terraform_minor" -lt 3; then
+    echo "Skipping complete workflow: key issuance requires Terraform 1.3 or later"
+    continue
+  fi
+  validate_example "$example"
+done
+
 if test "$terraform_major" -gt 1 || { test "$terraform_major" -eq 1 && test "$terraform_minor" -ge 14; }; then
   validate_example "$root/examples/actions/emqxcloud_reset_authorization_cache"
 fi

@@ -48,6 +48,31 @@ func TestResolveCredentialsRejectsPartialConfiguration(t *testing.T) {
 	}
 }
 
+func TestResolveCredentialsWaitsForUnknownOutputs(t *testing.T) {
+	t.Setenv("TEST_ENDPOINT", "https://old.example/api/v5")
+	t.Setenv("TEST_KEY", "old-key")
+	t.Setenv("TEST_SECRET", "old-secret")
+	for _, unknown := range []string{"endpoint", "key", "secret"} {
+		input := credentialInput{
+			name: "Deployment", endpoint: types.StringValue("https://new.example/api/v5"),
+			apiKey: types.StringValue("new-key"), apiSecret: types.StringValue("new-secret"),
+			endpointEnv: "TEST_ENDPOINT", apiKeyEnv: "TEST_KEY", apiSecretEnv: "TEST_SECRET",
+		}
+		switch unknown {
+		case "endpoint":
+			input.endpoint = types.StringUnknown()
+		case "key":
+			input.apiKey = types.StringUnknown()
+		case "secret":
+			input.apiSecret = types.StringUnknown()
+		}
+		credentials, err := resolveCredentials(input)
+		if err != nil || credentials != nil {
+			t.Fatalf("unknown %s used stale or incomplete credentials", unknown)
+		}
+	}
+}
+
 func TestResolveCredentialsUsesEnvironment(t *testing.T) {
 	t.Setenv("TEST_ENDPOINT", "https://emqx.example/api/v5")
 	t.Setenv("TEST_KEY", "key")
@@ -64,6 +89,59 @@ func TestResolveCredentialsUsesEnvironment(t *testing.T) {
 	}
 	if credentials == nil || credentials.apiKey != "key" || credentials.apiSecret != "secret" {
 		t.Fatalf("unexpected environment credentials: %#v", credentials)
+	}
+}
+
+func TestResolveCredentialsRejectsMixedSources(t *testing.T) {
+	t.Setenv("TEST_ENDPOINT", "https://old.example/api/v5")
+	t.Setenv("TEST_KEY", "old-key")
+	t.Setenv("TEST_SECRET", "old-secret")
+	for _, group := range []string{"Platform", "Deployment"} {
+		for _, field := range []string{"endpoint", "key", "secret", "all"} {
+			for _, empty := range []types.String{types.StringNull(), types.StringValue(""), types.StringValue(" ")} {
+				input := credentialInput{
+					name: group, endpoint: types.StringValue("https://new.example/api/v5"),
+					apiKey: types.StringValue("new-key"), apiSecret: types.StringValue("new-secret"),
+					endpointEnv: "TEST_ENDPOINT", apiKeyEnv: "TEST_KEY", apiSecretEnv: "TEST_SECRET",
+				}
+				switch field {
+				case "endpoint":
+					input.endpoint = empty
+				case "key":
+					input.apiKey = empty
+				case "secret":
+					input.apiSecret = empty
+				case "all":
+					if empty.IsNull() {
+						continue
+					}
+					input.endpoint, input.apiKey, input.apiSecret = empty, empty, empty
+				}
+				credentials, err := resolveCredentials(input)
+				if err == nil || credentials != nil {
+					t.Fatalf("%s %s was filled from the environment", group, field)
+				}
+			}
+		}
+	}
+}
+
+func TestResolveCredentialsPreservesCompleteSource(t *testing.T) {
+	t.Setenv("TEST_ENDPOINT", "https://old.example/api/v5")
+	t.Setenv("TEST_KEY", "")
+	t.Setenv("TEST_SECRET", "old-secret")
+	input := credentialInput{
+		name: "Deployment", endpoint: types.StringValue("https://new.example/api/v5"),
+		apiKey: types.StringValue("new-key"), apiSecret: types.StringValue(" secret with spaces "),
+		endpointEnv: "TEST_ENDPOINT", apiKeyEnv: "TEST_KEY", apiSecretEnv: "TEST_SECRET",
+	}
+	credentials, err := resolveCredentials(input)
+	if err != nil || credentials == nil || credentials.endpoint != input.endpoint.ValueString() || credentials.apiSecret != input.apiSecret.ValueString() {
+		t.Fatal("complete configuration was changed by a partial environment group")
+	}
+	input.endpoint, input.apiKey, input.apiSecret = types.StringNull(), types.StringNull(), types.StringNull()
+	if credentials, err = resolveCredentials(input); err == nil || credentials != nil {
+		t.Fatal("partial environment credentials were accepted")
 	}
 }
 

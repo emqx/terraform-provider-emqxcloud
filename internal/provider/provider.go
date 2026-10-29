@@ -43,8 +43,11 @@ type credentialGroup struct {
 }
 
 type ProviderData struct {
-	Platform   *client.Client
-	Deployment *client.Client
+	Platform          *client.Client
+	Deployment        *client.Client
+	PlatformPending   bool
+	DeploymentPending bool
+	TerraformVersion  string
 }
 
 type emqxCloudProvider struct {
@@ -146,7 +149,11 @@ func (p *emqxCloudProvider) Configure(
 		return
 	}
 
-	providerData := &ProviderData{}
+	providerData := &ProviderData{
+		TerraformVersion:  request.TerraformVersion,
+		PlatformPending:   config.PlatformEndpoint.IsUnknown() || config.PlatformAPIKey.IsUnknown() || config.PlatformAPISecret.IsUnknown(),
+		DeploymentPending: config.DeploymentEndpoint.IsUnknown() || config.DeploymentAPIKey.IsUnknown() || config.DeploymentAPISecret.IsUnknown(),
+	}
 	if platformCredentials != nil {
 		providerData.Platform, err = newAPIClient(platformCredentials, "/public_api/v1", p.allowHTTP)
 		if err != nil {
@@ -185,6 +192,7 @@ func (p *emqxCloudProvider) DataSources(_ context.Context) []func() datasource.D
 func (p *emqxCloudProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		newDeploymentResource,
+		newDeploymentAPIKeyResource,
 		newDeploymentTLSResource,
 		newConnectorResource,
 		newActionResource,
@@ -198,25 +206,20 @@ func (p *emqxCloudProvider) Resources(_ context.Context) []func() resource.Resou
 }
 
 func resolveCredentials(input credentialInput) (*credentialGroup, error) {
-	endpoint, err := configuredValue(input.endpoint, input.endpointEnv)
-	if err != nil {
-		return nil, fmt.Errorf("%s endpoint: %w", input.name, err)
-	}
-	apiKey, err := configuredValue(input.apiKey, input.apiKeyEnv)
-	if err != nil {
-		return nil, fmt.Errorf("%s API key: %w", input.name, err)
-	}
-	apiSecret, err := configuredValue(input.apiSecret, input.apiSecretEnv)
-	if err != nil {
-		return nil, fmt.Errorf("%s API secret: %w", input.name, err)
-	}
-
-	if endpoint == "" && apiKey == "" && apiSecret == "" {
+	// Resource outputs are unknown during the first plan. Never replace them with environment credentials.
+	if input.endpoint.IsUnknown() || input.apiKey.IsUnknown() || input.apiSecret.IsUnknown() {
 		return nil, nil
 	}
-	if endpoint == "" || apiKey == "" || apiSecret == "" {
+	endpoint, apiKey, apiSecret := input.endpoint.ValueString(), input.apiKey.ValueString(), input.apiSecret.ValueString()
+	if input.endpoint.IsNull() && input.apiKey.IsNull() && input.apiSecret.IsNull() {
+		endpoint, apiKey, apiSecret = os.Getenv(input.endpointEnv), os.Getenv(input.apiKeyEnv), os.Getenv(input.apiSecretEnv)
+		if endpoint == "" && apiKey == "" && apiSecret == "" {
+			return nil, nil
+		}
+	}
+	if strings.TrimSpace(endpoint) == "" || strings.TrimSpace(apiKey) == "" || strings.TrimSpace(apiSecret) == "" {
 		return nil, fmt.Errorf(
-			"%s endpoint, API key, and API secret must be configured together",
+			"%s endpoint, API key, and API secret must be configured together as non-blank values, either entirely in Provider configuration or entirely in environment variables",
 			input.name,
 		)
 	}
@@ -225,16 +228,6 @@ func resolveCredentials(input credentialInput) (*credentialGroup, error) {
 		apiKey:    apiKey,
 		apiSecret: apiSecret,
 	}, nil
-}
-
-func configuredValue(value types.String, environmentName string) (string, error) {
-	if value.IsUnknown() {
-		return "", fmt.Errorf("value must be known")
-	}
-	if !value.IsNull() && value.ValueString() != "" {
-		return value.ValueString(), nil
-	}
-	return os.Getenv(environmentName), nil
 }
 
 func newAPIClient(credentials *credentialGroup, requiredPathSuffix string, allowHTTP bool) (*client.Client, error) {

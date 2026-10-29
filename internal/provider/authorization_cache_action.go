@@ -40,7 +40,7 @@ func (a *resetAuthorizationCacheAction) Configure(
 	request action.ConfigureRequest,
 	response *action.ConfigureResponse,
 ) {
-	a.deployment = deploymentClientFromProviderData(request.ProviderData, &response.Diagnostics)
+	a.deployment, a.pending = deploymentClientFromProviderData(request.ProviderData, &response.Diagnostics)
 }
 
 func (a *resetAuthorizationCacheAction) Invoke(

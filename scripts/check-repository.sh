@@ -38,6 +38,7 @@ docs/resources/authorization_user.md
 docs/resources/banned.md
 docs/resources/connector.md
 docs/resources/deployment.md
+docs/resources/deployment_api_key.md
 docs/resources/deployment_tls.md
 docs/resources/rule.md
 docs/resources/source.md'

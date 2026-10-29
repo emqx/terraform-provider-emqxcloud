@@ -8,11 +8,13 @@ description: |-
 
 The EMQX Cloud Provider uses two independent credential groups:
 
-- The **Platform API** reads projects and deployments and manages Dedicated Flex deployment lifecycle and TLS.
+- The **Platform API** reads projects and deployments and manages Dedicated Flex deployment lifecycle, key issuance and TLS.
 - The **Deployment API** manages resources inside one EMQX v5 deployment.
 
 Configure only the group required by the data sources and resources in the current Provider instance. Endpoint,
-API key, and API secret must be configured together, and credentials never fall back between the two groups.
+API key, and API secret must be configured together. Each whole group comes from Provider configuration or from
+environment variables; partial/blank configuration never borrows environment values. Only an entirely unset/null
+group uses environment variables, and credentials never fall back between the two groups.
 
 ## Example Usage
 
@@ -23,7 +25,7 @@ terraform {
   required_providers {
     emqxcloud = {
       source  = "emqx/emqxcloud"
-      version = "~> 0.2.0"
+      version = "~> 0.3.0"
     }
   }
 }
@@ -52,6 +54,10 @@ output "projects" {
 
 output "deployments" {
   value = data.emqxcloud_deployments.current.deployments
+}
+
+output "connection_info" {
+  value = try(data.emqxcloud_deployment.selected[0].connection_info, null)
 }
 ```
 
@@ -87,9 +93,19 @@ secrets are. Treat both as credentials. Sensitive values and opaque JSON can rem
 ## Lifecycle Notes
 
 - `emqxcloud_deployment` creates Dedicated Flex deployments but never deletes them.
-- Terraform import is not supported in v0.2.0.
+- Terraform import is not supported.
 - Connector, Action, and Source names plus Rule IDs are generated once by the Provider. Existing v0.1 identities
   remain unchanged after their customer-selected identity fields are removed from configuration.
 - Delete dependent resources in Rule, then Action or Source, then Connector order.
 - `emqxcloud_reset_authorization_cache` requires Terraform 1.14 or later and runs only when explicitly invoked.
-- Platform deployment credentials do not provide Deployment API credentials. Configure each deployment separately.
+- `emqxcloud_deployment_api_key` issues a key with explicit permissions through the Platform API and retains its
+  once-only secret in Sensitive state. Refresh does not reissue it; inputs, deletion and replacement are guarded.
+  Revoke it in Console before explicitly transferring its state; remote revocation or permission drift cannot be detected.
+  This resource requires Terraform 1.3 or later for destruction-plan safeguards.
+- The `platform/complete` example creates a deployment, issues its key and passes `connection_info.api_endpoint`,
+  `app_id` and `app_secret` to a Deployment Provider alias in one apply. Unknown values wait for dependencies and
+  do not fall back to old environment credentials.
+- When Deployment credentials become unknown, refresh retains prior state with a warning and sends no API request.
+  Run a full plan after dependencies recover to check remote changes; writes and Actions require known credentials.
+  Clean Deployment resources while running before deliberately stopping a deployment. An externally stopped
+  deployment can be restarted by a normal apply; use a targeted deployment apply only if dependencies remain blocked.

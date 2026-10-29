@@ -24,6 +24,7 @@ const (
 
 type deploymentTLSResource struct {
 	platform     *client.Client
+	pending      bool
 	pollInterval time.Duration
 	timeout      time.Duration
 }
@@ -123,7 +124,7 @@ func (r *deploymentTLSResource) Configure(
 	request resource.ConfigureRequest,
 	response *resource.ConfigureResponse,
 ) {
-	r.platform = platformClientFromProviderData(request.ProviderData, &response.Diagnostics)
+	r.platform, r.pending = platformClientFromProviderData(request.ProviderData, &response.Diagnostics)
 }
 
 func (r *deploymentTLSResource) ValidateConfig(
@@ -179,7 +180,7 @@ func (r *deploymentTLSResource) Create(
 ) {
 	var plan deploymentTLSModel
 	response.Diagnostics.Append(request.Plan.Get(ctx, &plan)...)
-	if response.Diagnostics.HasError() || !requirePlatform(r.platform, &response.Diagnostics) {
+	if response.Diagnostics.HasError() || !requirePlatform(r.platform, r.pending, &response.Diagnostics) {
 		return
 	}
 
@@ -218,7 +219,7 @@ func (r *deploymentTLSResource) Read(
 ) {
 	var state deploymentTLSModel
 	response.Diagnostics.Append(request.State.Get(ctx, &state)...)
-	if response.Diagnostics.HasError() || !requirePlatform(r.platform, &response.Diagnostics) {
+	if response.Diagnostics.HasError() || !requirePlatform(r.platform, r.pending, &response.Diagnostics) {
 		return
 	}
 
@@ -242,7 +243,7 @@ func (r *deploymentTLSResource) Update(
 ) {
 	var plan deploymentTLSModel
 	response.Diagnostics.Append(request.Plan.Get(ctx, &plan)...)
-	if response.Diagnostics.HasError() || !requirePlatform(r.platform, &response.Diagnostics) {
+	if response.Diagnostics.HasError() || !requirePlatform(r.platform, r.pending, &response.Diagnostics) {
 		return
 	}
 
@@ -274,7 +275,7 @@ func (r *deploymentTLSResource) Delete(
 ) {
 	var state deploymentTLSModel
 	response.Diagnostics.Append(request.State.Get(ctx, &state)...)
-	if response.Diagnostics.HasError() || !requirePlatform(r.platform, &response.Diagnostics) {
+	if response.Diagnostics.HasError() || !requirePlatform(r.platform, r.pending, &response.Diagnostics) {
 		return
 	}
 

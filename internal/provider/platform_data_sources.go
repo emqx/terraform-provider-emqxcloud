@@ -29,17 +29,18 @@ type projectsDataSourceModel struct {
 }
 
 type deploymentAPIModel struct {
-	CreateAt     string `json:"createAt"`
-	ID           string `json:"deploymentID"`
-	Name         string `json:"deploymentName"`
-	Type         string `json:"deploymentType"`
-	ProjectName  string `json:"projectName"`
-	Platform     string `json:"platform"`
-	Region       string `json:"region"`
-	Status       string `json:"status"`
-	Version      string `json:"version"`
-	Connections  int64  `json:"connections"`
-	Transactions int64  `json:"tps"`
+	CreateAt     string                        `json:"createAt"`
+	ID           string                        `json:"deploymentID"`
+	Name         string                        `json:"deploymentName"`
+	Type         string                        `json:"deploymentType"`
+	ProjectName  string                        `json:"projectName"`
+	Platform     string                        `json:"platform"`
+	Region       string                        `json:"region"`
+	Status       string                        `json:"status"`
+	Version      string                        `json:"version"`
+	Connections  int64                         `json:"connections"`
+	Transactions int64                         `json:"tps"`
+	Connection   *deploymentConnectionAPIModel `json:"connection"`
 }
 
 type deploymentModel struct {
@@ -57,6 +58,7 @@ type deploymentModel struct {
 }
 
 type deploymentDetailModel struct {
+	Connection   types.Object `tfsdk:"connection_info"`
 	CreateAt     types.String `tfsdk:"created_at"`
 	ID           types.String `tfsdk:"deployment_id"`
 	Name         types.String `tfsdk:"name"`
@@ -74,14 +76,17 @@ type deploymentsDataSourceModel struct {
 
 type deploymentDataSource struct {
 	platform *client.Client
+	pending  bool
 }
 
 type deploymentsDataSource struct {
 	platform *client.Client
+	pending  bool
 }
 
 type projectsDataSource struct {
 	platform *client.Client
+	pending  bool
 }
 
 func newProjectsDataSource() datasource.DataSource {
@@ -128,7 +133,7 @@ func (d *projectsDataSource) Configure(
 	request datasource.ConfigureRequest,
 	response *datasource.ConfigureResponse,
 ) {
-	d.platform = platformClientFromProviderData(request.ProviderData, &response.Diagnostics)
+	d.platform, d.pending = platformClientFromProviderData(request.ProviderData, &response.Diagnostics)
 }
 
 func (d *projectsDataSource) Read(
@@ -136,7 +141,7 @@ func (d *projectsDataSource) Read(
 	_ datasource.ReadRequest,
 	response *datasource.ReadResponse,
 ) {
-	if !requirePlatform(d.platform, &response.Diagnostics) {
+	if !requirePlatform(d.platform, d.pending, &response.Diagnostics) {
 		return
 	}
 
@@ -199,7 +204,7 @@ func (d *deploymentsDataSource) Configure(
 	request datasource.ConfigureRequest,
 	response *datasource.ConfigureResponse,
 ) {
-	d.platform = platformClientFromProviderData(request.ProviderData, &response.Diagnostics)
+	d.platform, d.pending = platformClientFromProviderData(request.ProviderData, &response.Diagnostics)
 }
 
 func (d *deploymentsDataSource) Read(
@@ -207,7 +212,7 @@ func (d *deploymentsDataSource) Read(
 	_ datasource.ReadRequest,
 	response *datasource.ReadResponse,
 ) {
-	if !requirePlatform(d.platform, &response.Diagnostics) {
+	if !requirePlatform(d.platform, d.pending, &response.Diagnostics) {
 		return
 	}
 
@@ -258,7 +263,7 @@ func (d *deploymentDataSource) Configure(
 	request datasource.ConfigureRequest,
 	response *datasource.ConfigureResponse,
 ) {
-	d.platform = platformClientFromProviderData(request.ProviderData, &response.Diagnostics)
+	d.platform, d.pending = platformClientFromProviderData(request.ProviderData, &response.Diagnostics)
 }
 
 func (d *deploymentDataSource) Read(
@@ -266,7 +271,7 @@ func (d *deploymentDataSource) Read(
 	request datasource.ReadRequest,
 	response *datasource.ReadResponse,
 ) {
-	if !requirePlatform(d.platform, &response.Diagnostics) {
+	if !requirePlatform(d.platform, d.pending, &response.Diagnostics) {
 		return
 	}
 
@@ -356,6 +361,12 @@ func deploymentAttributes(idRequired bool, includeListFields bool) map[string]sc
 			Computed:    true,
 			Description: "EMQX major version reported by the Platform API.",
 		}
+	} else {
+		attributes["connection_info"] = schema.ObjectAttribute{
+			Computed:       true,
+			AttributeTypes: deploymentConnectionTypes,
+			Description:    "MQTT address, listener ports and Deployment API endpoint; object and missing fields are null when unavailable. Use only ports whose status is running.",
+		}
 	}
 	return attributes
 }
@@ -378,6 +389,7 @@ func terraformDeployment(deployment deploymentAPIModel) deploymentModel {
 
 func terraformDeploymentDetail(deployment deploymentAPIModel) deploymentDetailModel {
 	return deploymentDetailModel{
+		Connection:   terraformDeploymentConnection(deployment.Connection),
 		CreateAt:     types.StringValue(deployment.CreateAt),
 		ID:           types.StringValue(deployment.ID),
 		Name:         types.StringValue(deployment.Name),
@@ -392,9 +404,9 @@ func terraformDeploymentDetail(deployment deploymentAPIModel) deploymentDetailMo
 
 func platformClientFromProviderData(data any, diagnostics interface {
 	AddError(summary string, detail string)
-}) *client.Client {
+}) (*client.Client, bool) {
 	if data == nil {
-		return nil
+		return nil, false
 	}
 	providerData, ok := data.(*ProviderData)
 	if !ok {
@@ -402,14 +414,18 @@ func platformClientFromProviderData(data any, diagnostics interface {
 			"Unexpected provider data",
 			fmt.Sprintf("Expected *ProviderData, got %T.", data),
 		)
-		return nil
+		return nil, false
 	}
-	return providerData.Platform
+	return providerData.Platform, providerData.PlatformPending
 }
 
-func requirePlatform(platform *client.Client, diagnostics interface {
+func requirePlatform(platform *client.Client, pending bool, diagnostics interface {
 	AddError(summary string, detail string)
 }) bool {
+	if pending {
+		diagnostics.AddError("Platform API credentials are pending", "Platform endpoint or credentials depend on resource values that are not yet known. Complete those dependencies before using the Platform API. No environment credentials were used.")
+		return false
+	}
 	if platform != nil {
 		return true
 	}
